@@ -13,8 +13,9 @@ function slotCta(n: NodeT): { label: string; action?: string } | undefined {
   if (!s?.label) return undefined;
   return { label: String(s.label), action: s.action ? String(s.action) : undefined };
 }
-function hasChildOf(n: NodeT, kind: NodeT["kind"]) {
-  return (n.children ?? []).some((c) => c.kind === kind);
+function hasChildOf(n: NodeT, kind: NodeT["kind"]): boolean {
+  const children: NodeT[] = Array.isArray(n.children) ? (n.children as NodeT[]) : [];
+  return children.some((c: NodeT) => c.kind === kind);
 }
 
 /** --- Dispatch --- */
