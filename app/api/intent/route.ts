@@ -6,22 +6,47 @@ import { z } from "zod";
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 console.log("🔑 OPENAI key present:", !!process.env.OPENAI_API_KEY);
 
+// Helper to coerce array -> single string
+function asText(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  if (typeof v === "string") return v;
+  if (Array.isArray(v)) return v.filter(x => typeof x === "string").join(" ").trim() || undefined;
+  return String(v);
+}
+
+// Intent schema (CTA required so LLM always decides)
 const Intent = z.object({
   goal: z.string().max(200),
-  tone: z.enum(["neutral","friendly","promo","informative"]).default("friendly"),
-  layout: z.enum(["two-block-cards","three-list-items","one-card-cta"]),
+  tone: z.enum(["neutral", "friendly", "promo", "informative"]).default("friendly"),
+  layout: z.enum(["two-block-cards", "three-list-items", "one-card-cta"]),
   title: z.string().max(60).optional(),
-  body:  z.string().max(220).optional(),
-  cta:   z.string().max(28).optional()
+  body: z.string().max(220).optional(),
+  cta: z.string().max(28),
 });
+type IntentT = z.infer<typeof Intent>;
 
 export async function POST(req: NextRequest) {
-  const { prompt, dos, donts } = await req.json();
+  const { userIntent, businessIntent, dos, donts, prompt } = await req.json();
 
-  const system = `Extract a compact marketing intent JSON.
-Choose ONE layout: two-block-cards | three-list-items | one-card-cta.
-Keep strings short.`;
-  const user = `PROMPT:\n${prompt}\n\nDOS: ${dos||"-"}\nDONTS: ${donts||"-"}\n\nReturn JSON: goal, tone(neutral|friendly|promo|informative), layout, title, body, cta.`;
+  const combined =
+    prompt ??
+    [
+      `USER INTENT: ${userIntent ?? ""}`,
+      `BUSINESS INTENT: ${businessIntent ?? ""}`,
+      `DOS: ${dos ?? ""}`,
+      `DONTS: ${donts ?? ""}`,
+    ].join("\n");
+
+  const system =
+    `Extract a compact marketing intent JSON.\n` +
+    `Choose ONE layout: two-block-cards | three-list-items | one-card-cta.\n` +
+    `Keep strings short.\n` +
+    `Return **plain strings** (not arrays). Title: <=60 chars, Body: <=220 chars, CTA: <=28 chars.`;
+
+  const user =
+    `PROMPT:\n${combined}\n\n` +
+    `Return JSON object with keys: goal, tone("neutral"|"friendly"|"promo"|"informative"), layout, title?, body?, cta.\n` +
+    `All keys must be strings (no arrays).`;
 
   const r = await openai.chat.completions.create({
     model: "gpt-4o-mini",
@@ -30,12 +55,32 @@ Keep strings short.`;
     messages: [{ role: "system", content: system }, { role: "user", content: user }],
   });
 
-  let parsed: unknown;
-  try { parsed = JSON.parse(r.choices[0]?.message?.content || "{}"); }
-  catch { parsed = {}; }
+  // Parse raw JSON from the model
+  let raw: any = {};
+  try {
+    raw = JSON.parse(r.choices[0]?.message?.content || "{}");
+  } catch {
+    raw = {};
+  }
 
-  const out = Intent.safeParse(parsed);
-  if (!out.success)
-    return NextResponse.json({ error: "intent_parse_failed", issues: out.error.issues }, { status: 400 });
-  return NextResponse.json(out.data);
+  // 🔧 Normalize fields that sometimes come back as arrays
+  const normalized = {
+    goal: asText(raw.goal),
+    tone: asText(raw.tone),
+    layout: asText(raw.layout),
+    title: asText(raw.title),
+    body: asText(raw.body),
+    cta: asText(raw.cta),
+  };
+
+  // Validate after normalization
+  const out = Intent.safeParse(normalized);
+  if (!out.success) {
+    return NextResponse.json(
+      { error: "intent_parse_failed", issues: out.error.issues, raw: raw },
+      { status: 400 }
+    );
+  }
+
+  return NextResponse.json(out.data satisfies IntentT);
 }

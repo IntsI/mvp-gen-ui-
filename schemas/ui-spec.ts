@@ -1,5 +1,7 @@
+// schemas/ui.ts
 import { z } from "zod";
 
+/** Slot schema */
 export const Slot = z.discriminatedUnion("slot", [
   z.object({ slot: z.literal("title"), text: z.string().max(60) }),
   z.object({ slot: z.literal("body"), text: z.string().max(220) }),
@@ -11,17 +13,27 @@ export const Slot = z.discriminatedUnion("slot", [
   z.object({ slot: z.literal("media"), kind: z.enum(["placeholder"]) }),
 ]);
 
-// Node schema
+/** Node schema (recursive) */
 export const Node: z.ZodType<any> = z.lazy(() =>
   z.object({
     kind: z.enum(["Stage", "Grid", "Card", "Media", "Heading", "Text", "Button"]),
-    // 👇 Vercel build fix: specify key type explicitly
+    // Vercel build fix: specify key type explicitly
     props: z.record(z.string(), z.any()).optional(),
     slots: z.array(Slot).optional(),
     children: z.array(Node).optional(),
   })
 );
 
+/** Style schema: fixed literals */
+const StyleSchema = z
+  .object({
+    bg: z.literal("#FFFFFF"),
+    radius: z.literal("lg"),
+  })
+  // ensure defaults are always present even if upstream omits style
+  .default({ bg: "#FFFFFF", radius: "lg" });
+
+/** UiSpec schema */
 export const UiSpecSchema = z.object({
   layout: z.enum([
     "two-block-cards",
@@ -29,13 +41,7 @@ export const UiSpecSchema = z.object({
     "one-card-cta",
     "four-grid-cards",
   ]),
-  style: z.object({
-    bg: z
-      .string()
-      .regex(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
-      .default("#FFFFFF"),
-  radius: z.enum(["sm", "lg"]).default("lg"),
-  }),
+  style: StyleSchema,
   components: z.array(Node).min(1),
 });
 

@@ -5,11 +5,10 @@ import type { UiSpec } from "@/schemas/ui-spec";
 import { RenderUi } from "@/ui/Renderer";
 
 export default function Page() {
-  const [prompt, setPrompt] = useState("Weekend espresso sale. Friendly tone.");
+  const [userIntent, setUserIntent] = useState("Weekend espresso sale. Friendly tone.");
+  const [businessIntent, setBusinessIntent] = useState("Highlight new subscription plan and collect emails.");
   const [dos, setDos] = useState("Mention free shipping over 300 kr;");
   const [donts, setDonts] = useState("No -50% claims; keep short;");
-  const [bg, setBg] = useState("#FFFFFF");
-  const [radius, setRadius] = useState<"sm" | "lg">("lg");
   const [spec, setSpec] = useState<UiSpec | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -19,11 +18,24 @@ export default function Page() {
       setLoading(true);
       setErr(null);
 
+      // Combined prompt for backward compatibility
+      const combinedPrompt =
+        `USER INTENT: ${userIntent}\n` +
+        `BUSINESS INTENT: ${businessIntent}\n` +
+        `DOS: ${dos}\n` +
+        `DONTS: ${donts}`;
+
       // 1) Extract intent
       const intentRes = await fetch("/api/intent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, dos, donts }),
+        body: JSON.stringify({
+          userIntent,
+          businessIntent,
+          dos,
+          donts,
+          prompt: combinedPrompt,
+        }),
       });
       const intent = await intentRes.json();
       if (!intentRes.ok) throw new Error("intent: " + JSON.stringify(intent));
@@ -32,7 +44,7 @@ export default function Page() {
       const specRes = await fetch("/api/spec", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent, style: { bg, radius } }),
+        body: JSON.stringify({ intent }),
       });
 
       const specText = await specRes.text();
@@ -61,11 +73,18 @@ export default function Page() {
       <section className="bg-white border rounded-2xl p-4 shadow-sm flex flex-col gap-3">
         <h2 className="text-lg font-semibold">Inputs</h2>
 
-        <label className="text-sm font-medium">Intent</label>
+        <label className="text-sm font-medium">User Intent</label>
         <textarea
-          className="border rounded-xl p-2 h-28"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
+          className="border rounded-xl p-2 h-24"
+          value={userIntent}
+          onChange={(e) => setUserIntent(e.target.value)}
+        />
+
+        <label className="text-sm font-medium">Business Intent</label>
+        <textarea
+          className="border rounded-xl p-2 h-24"
+          value={businessIntent}
+          onChange={(e) => setBusinessIntent(e.target.value)}
         />
 
         <label className="text-sm font-medium">Dos</label>
@@ -81,28 +100,6 @@ export default function Page() {
           value={donts}
           onChange={(e) => setDonts(e.target.value)}
         />
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-sm font-medium">BG color (hex)</label>
-            <input
-              className="border rounded-xl p-2 w-full"
-              value={bg}
-              onChange={(e) => setBg(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="text-sm font-medium">Card radius</label>
-            <select
-              className="border rounded-xl p-2 w-full"
-              value={radius}
-              onChange={(e) => setRadius(e.target.value as "sm" | "lg")}
-            >
-              <option value="lg">lg</option>
-              <option value="sm">sm</option>
-            </select>
-          </div>
-        </div>
 
         <button
           onClick={generate}
