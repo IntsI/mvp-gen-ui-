@@ -1,8 +1,33 @@
 "use client";
 import { useState } from "react";
-// ⬇️ type-only import so Zod never loads in the client bundle
 import type { UiSpec } from "@/schemas/ui-spec";
 import { RenderUi } from "@/ui/Renderer";
+
+/** Robust fetch helpers */
+async function readJsonOrThrow(res: Response, label: string) {
+  const ct = res.headers.get("content-type") || "";
+  const text = await res.text(); // read once
+  if (!res.ok) {
+    // server sent an error; show body if present
+    let msg = text || `${label}: HTTP ${res.status}`;
+    try {
+      const j = JSON.parse(text);
+      msg = `${label}: ${JSON.stringify(j)}`;
+    } catch {
+      // keep text as-is
+    }
+    throw new Error(msg);
+  }
+  if (!ct.includes("application/json")) {
+    // not json; include first 200 chars to help debugging
+    throw new Error(`${label}: non-JSON response\n${text.slice(0, 200)}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw new Error(`${label}: JSON parse failed\n${text.slice(0, 200)}`);
+  }
+}
 
 export default function Page() {
   const [userIntent, setUserIntent] = useState("Weekend espresso sale. Friendly tone.");
@@ -18,14 +43,13 @@ export default function Page() {
       setLoading(true);
       setErr(null);
 
-      // Combined prompt for backward compatibility
       const combinedPrompt =
         `USER INTENT: ${userIntent}\n` +
         `BUSINESS INTENT: ${businessIntent}\n` +
         `DOS: ${dos}\n` +
         `DONTS: ${donts}`;
 
-      // 1) Extract intent
+      // 1) /api/intent
       const intentRes = await fetch("/api/intent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -37,31 +61,24 @@ export default function Page() {
           prompt: combinedPrompt,
         }),
       });
-      const intent = await intentRes.json();
-      if (!intentRes.ok) throw new Error("intent: " + JSON.stringify(intent));
+      const intent = await readJsonOrThrow(intentRes, "intent");
 
-      // 2) Generate spec (server validates with Zod)
+      // 2) /api/spec
       const specRes = await fetch("/api/spec", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ intent }),
       });
+      const specJson = (await readJsonOrThrow(specRes, "spec")) as UiSpec;
 
-      const specText = await specRes.text();
-      if (!specRes.ok) throw new Error(specText || `spec: HTTP ${specRes.status}`);
-
-      // 3) Just parse JSON; trust server-side validation
-      const specJson = JSON.parse(specText) as UiSpec;
-
-      // Minimal guard so UI doesn't crash if server returns something odd
       if (!specJson || !Array.isArray((specJson as any).components)) {
-        throw new Error("Spec format invalid");
+        throw new Error("spec: format invalid (missing components)");
       }
 
       setSpec(specJson);
     } catch (e: any) {
-      console.error("❌ Error generating UI:", e);
-      setErr(e.message ?? String(e));
+      console.error("❌ Generate error:", e);
+      setErr(e?.message ?? String(e));
     } finally {
       setLoading(false);
     }
@@ -109,7 +126,7 @@ export default function Page() {
           {loading ? "Generating…" : "Generate with ChatGPT"}
         </button>
 
-        {err && <p className="text-sm text-red-600">{err}</p>}
+        {err && <p className="text-sm text-red-600 whitespace-pre-wrap">{err}</p>}
       </section>
 
       {/* PREVIEW */}
