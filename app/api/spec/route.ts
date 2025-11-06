@@ -1,9 +1,18 @@
 export const dynamic = "force-dynamic";
+
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { UiSpecSchema, type UiSpec, type NodeT } from "@/schemas/ui-spec";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Lazy init so env is read at runtime (not during build)
+function getOpenAI() {
+  if (!process.env.OPENAI_API_KEY) {
+    console.warn("⚠️ Missing OPENAI_API_KEY at runtime");
+    throw new Error("Missing OPENAI_API_KEY");
+  }
+  console.log("🔑 OPENAI key present:", true);
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+}
 
 /** --- Normalizers ------------------------------------------------------- */
 
@@ -101,6 +110,7 @@ export async function POST(req: NextRequest) {
       `INTENT JSON:\n${JSON.stringify(intent, null, 2)}\n` +
       `Return UiSpec { layout, style:{bg:"#FFFFFF", radius:"lg"}, components:[Node...] }`;
 
+    const openai = getOpenAI();
     const r = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0.6,

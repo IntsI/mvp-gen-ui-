@@ -1,10 +1,18 @@
 export const dynamic = "force-dynamic";
+
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { z } from "zod";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-console.log("🔑 OPENAI key present:", !!process.env.OPENAI_API_KEY);
+// Lazy init so env is read at runtime (not during build)
+function getOpenAI() {
+  if (!process.env.OPENAI_API_KEY) {
+    console.warn("⚠️ Missing OPENAI_API_KEY at runtime");
+    throw new Error("Missing OPENAI_API_KEY");
+  }
+  console.log("🔑 OPENAI key present:", true);
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+}
 
 // Helper to coerce array -> single string
 function asText(v: unknown): string | undefined {
@@ -41,13 +49,14 @@ export async function POST(req: NextRequest) {
     `Extract a compact marketing intent JSON.\n` +
     `Choose ONE layout: two-block-cards | three-list-items | one-card-cta.\n` +
     `Keep strings short.\n` +
-    `Return **plain strings** (not arrays). Title: <=60 chars, Body: <=220 chars, CTA: <=28 chars.`;
+    `Return plain strings (not arrays). Title<=60, Body<=220, CTA<=28.`;
 
   const user =
     `PROMPT:\n${combined}\n\n` +
     `Return JSON object with keys: goal, tone("neutral"|"friendly"|"promo"|"informative"), layout, title?, body?, cta.\n` +
-    `All keys must be strings (no arrays).`;
+    `All values must be strings (no arrays).`;
 
+  const openai = getOpenAI();
   const r = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     temperature: 0.7,
@@ -63,7 +72,7 @@ export async function POST(req: NextRequest) {
     raw = {};
   }
 
-  // 🔧 Normalize fields that sometimes come back as arrays
+  // Normalize fields that sometimes come back as arrays
   const normalized = {
     goal: asText(raw.goal),
     tone: asText(raw.tone),
@@ -77,7 +86,7 @@ export async function POST(req: NextRequest) {
   const out = Intent.safeParse(normalized);
   if (!out.success) {
     return NextResponse.json(
-      { error: "intent_parse_failed", issues: out.error.issues, raw: raw },
+      { error: "intent_parse_failed", issues: out.error.issues, raw },
       { status: 400 }
     );
   }
