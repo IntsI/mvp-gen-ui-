@@ -19,7 +19,7 @@ export const Slot = z.discriminatedUnion("slot", [
   z.object({
     slot: z.literal("media"),
     kind: z.enum(["placeholder", "image"]).default("placeholder"),
-    id: z.string().optional(), // used when kind === "image"
+    id: z.string().optional(), // catalog id when kind === "image"
   }),
 ]);
 

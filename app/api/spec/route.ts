@@ -155,7 +155,7 @@ export async function POST(req: NextRequest) {
     const { intent } = await req.json();
     const openai = getOpenAI();
 
-    // No key → use deterministic fallback spec (prevents build-time failure)
+    // No key → deterministic fallback (avoids build-time failure)
     if (!openai) {
       console.warn(
         "[api/spec] OPENAI_API_KEY missing – returning fallback UiSpec"
@@ -168,38 +168,39 @@ export async function POST(req: NextRequest) {
 You generate a UiSpec JSON for a small 400x400 marketing surface.
 
 Allowed node kinds ONLY:
-- "Stage"
-- "Grid"
-- "Card"
-- "Media"
-- "Heading"
-- "Text"
-- "Button"
-
-Do NOT invent other kinds like Hero, Section, Container, Row, etc.
+- "Stage" | "Grid" | "Card" | "Media" | "Heading" | "Text" | "Button"
 
 Slots:
-- title: { "slot": "title", "text": string (<= 60 chars) }
-- body:  { "slot": "body",  "text": string (<= 220 chars) }
+- title: { "slot": "title", "text": string (<= 60) }
+- body:  { "slot": "body",  "text": string (<= 220) }
 - cta:   { "slot": "cta",   "label": string (<= 28), "action": string (<= 120) }
 - media: { "slot": "media", "kind": "placeholder" | "image", "id"?: string }
 
-Style (fixed):
+Media catalog (for kind:"image"):
+- "fold-flip-combo"  : Galaxy Z Fold / Z Flip / foldable hero
+- "monitor-paradigm" : Monitor / desktop / workspace
+- "watch-ultra"      : Galaxy Watch Ultra / rugged / fitness
+- "watch8-combo"     : Galaxy Watch8 / lifestyle
+- "s24-fe-banner"    : Galaxy S24 FE / phone hero
+- "tab-s10-hero"     : Galaxy Tab S10 / tablet + AI productivity
+
+If the intent CLEARLY matches one of these themes, you SHOULD add
+exactly one media slot on the main Card:
+{ "slot": "media", "kind": "image", "id": "<one-of-above>" }.
+
+If there is no clear match, you MAY:
+- use { "slot": "media", "kind": "placeholder" } on the main Card, or
+- omit media entirely.
+
+Style is fixed:
 "style": { "bg": "#FFFFFF", "radius": "lg" }
 
 Layout:
-Use one of:
-- "one-card-cta"
-- "two-block-cards"
-- "three-list-items"
-- "four-grid-cards"
+- Use "one-card-cta" for a single hero surface.
+- Otherwise you may choose "two-block-cards" | "three-list-items" | "four-grid-cards".
 
-Prefer "one-card-cta" when there is a single clear offer.
-
-Structure:
-- Always have a Stage as the first component (or it will be wrapped).
-- For "one-card-cta": one main Card with title, body, cta, optional media.
-- Use intent.cta for Button label when appropriate.
+Always:
+- Start with a Stage as root.
 - Keep copy concise and within limits.
 - Return ONLY valid JSON (no markdown, no comments).
 `.trim();

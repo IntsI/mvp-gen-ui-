@@ -1,35 +1,39 @@
 // components/ds/Media.tsx
 import React from "react";
-import { MEDIA_CATALOG } from "@/lib/media-catalog";
+import { resolveMediaUrl } from "@/lib/media-catalog";
 
 type MediaProps = {
-  size?: "full" | "small";
+  size?: "full";
   kind?: "placeholder" | "image";
   id?: string;
 };
 
+/**
+ * Media
+ * - Parent controls height.
+ * - We always fill width/height of the container.
+ */
 export function Media({
   size = "full",
   kind = "placeholder",
   id,
 }: MediaProps) {
-  const hClass = size === "full" ? "h-full" : "h-16";
+  const url = kind === "image" ? resolveMediaUrl(id) : undefined;
 
-  if (kind === "image" && id) {
-    const item = MEDIA_CATALOG.find((m) => m.id === id);
-    if (item) {
-      return (
-        <img
-          src={item.url}
-          alt=""
-          className={`w-full ${hClass} object-cover rounded-xl`}
-        />
-      );
-    }
-  }
+  // full = take all the space parent gives (hero use-case)
+  const base =
+    size === "full"
+      ? "w-full h-full"
+      : "w-full h-24";
 
-  // Fallback: if no valid image -> simple placeholder
   return (
-    <div className={`w-full ${hClass} bg-gray-200 rounded-xl`} />
+    <div
+      className={`${base} rounded-2xl overflow-hidden bg-gray-200 flex items-center justify-center`}
+    >
+      {url && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt="" className="w-full h-full object-cover" />
+      )}
+    </div>
   );
 }
