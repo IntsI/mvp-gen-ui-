@@ -15,14 +15,16 @@ function slotCtaLabel(n: NodeT): string | undefined {
   return s?.label ? String(s.label) : undefined;
 }
 
-function mediaSlot(n: NodeT):
-  | { kind: "placeholder" | "image"; id?: string }
-  | null {
+function slotMedia(
+  n: NodeT
+): { kind: "placeholder" | "image"; id?: string } | null {
   const s = n.slots?.find((x: any) => x.slot === "media") as any;
   if (!s) return null;
 
-  const kind: "placeholder" | "image" =
-    s.kind === "image" ? "image" : "placeholder";
+  const kind =
+    s.kind === "image" || s.kind === "placeholder"
+      ? (s.kind as "image" | "placeholder")
+      : "placeholder";
 
   return {
     kind,
@@ -34,10 +36,10 @@ function hasChildOf(n: NodeT, kind: NodeT["kind"]): boolean {
   const children: NodeT[] = Array.isArray(n.children)
     ? (n.children as NodeT[])
     : [];
-  return children.some((c) => c.kind === kind);
+  return children.some((c: NodeT) => c.kind === kind);
 }
 
-/* ---------- Card helpers ---------- */
+/* ---------- Aggregated card readers ---------- */
 
 function getCardTitle(n: NodeT): string | undefined {
   const self = slotText(n, "title");
@@ -73,8 +75,12 @@ function renderNode(
       const isOneCard = layout === "one-card-cta";
 
       if (isOneCard) {
+        // Stage is the fixed 400x400 viewport; Card inside owns the chrome.
         return (
-          <div key={i} className="w-[400px] h-[400px]">
+          <div
+            key={i}
+            className="w-[400px] h-[400px] flex items-stretch justify-stretch"
+          >
             {(n.children ?? []).map((c: NodeT, idx: number) =>
               renderNode(c, idx, _style, layout)
             )}
@@ -82,6 +88,7 @@ function renderNode(
         );
       }
 
+      // Other layouts: normal Stage wrapper
       return (
         <DS.Stage key={i} padded={true as any}>
           {(n.children ?? []).map((c: NodeT, idx: number) =>
@@ -103,11 +110,12 @@ function renderNode(
     case "Card": {
       const isOneCard = layout === "one-card-cta";
 
+      /* ---------- One-card hero layout ---------- */
       if (isOneCard) {
         const title = getCardTitle(n);
         const body = getCardBody(n);
         const cta = getCardCta(n);
-        const media = mediaSlot(n);
+        const media = slotMedia(n);
 
         return (
           <DS.Card
@@ -117,23 +125,28 @@ function renderNode(
             variant="block"
             fullHeight={true}
           >
-            <div className="flex flex-col h-full gap-4">
-              {/* Media top, takes available vertical space */}
-              <div className="flex-1 flex items-stretch">
-                <DS.Media
-                  size="full"
-                  kind={media?.kind || "placeholder"}
-                  id={media?.id}
-                />
-              </div>
+            {/* Flex column that fills the card */}
+            <div className="flex flex-col gap-3 h-full">
+              {/* Media: fills all remaining vertical space; min-h-0 so it can shrink */}
+              {media && (
+                <div className="flex-1 min-h-0">
+                  <DS.Media
+                    size="cover"
+                    kind={media.kind}
+                    id={media.id}
+                  />
+                </div>
+              )}
 
-              {/* Text */}
-              <div className="flex-none flex flex-col gap-2">
-                {title && <DS.Heading>{title}</DS.Heading>}
-                {body && <DS.Text>{body}</DS.Text>}
-              </div>
+              {/* Text stack (intrinsic height) */}
+              {(title || body) && (
+                <div className="flex-none flex flex-col gap-1">
+                  {title && <DS.Heading>{title}</DS.Heading>}
+                  {body && <DS.Text>{body}</DS.Text>}
+                </div>
+              )}
 
-              {/* CTA */}
+              {/* CTA pinned at bottom */}
               {cta && (
                 <div className="flex-none">
                   <DS.Button label={cta} />
@@ -144,15 +157,17 @@ function renderNode(
         );
       }
 
-      // Default cards
+      /* ---------- Default cards for other layouts ---------- */
+
       const title = slotText(n, "title");
       const body = slotText(n, "body");
       const cta = slotCtaLabel(n);
+      const media = slotMedia(n);
+
       const hasHeadingChild = hasChildOf(n, "Heading");
       const hasTextChild = hasChildOf(n, "Text");
       const hasButtonChild = hasChildOf(n, "Button");
       const hasMediaChild = hasChildOf(n, "Media");
-      const media = mediaSlot(n);
 
       const children: React.ReactNode[] = [];
 
@@ -160,7 +175,7 @@ function renderNode(
         children.push(
           <DS.Media
             key="slot-media"
-            size="full"
+            size="cover"
             kind={media.kind}
             id={media.id}
           />
@@ -195,21 +210,15 @@ function renderNode(
       );
     }
 
-    case "Media": {
-      const kind =
-        ((n.props as any)?.kind as "placeholder" | "image") ||
-        "placeholder";
-      const id = (n.props as any)?.id as string | undefined;
-
+    case "Media":
       return (
         <DS.Media
           key={i}
-          size={(n.props as any)?.size || "full"}
-          kind={kind}
-          id={id}
+          size={(n.props as any)?.size || "cover"}
+          kind={(n.props as any)?.kind || "placeholder"}
+          id={(n.props as any)?.id}
         />
       );
-    }
 
     case "Heading":
       return <DS.Heading key={i}>{slotText(n, "title")}</DS.Heading>;
