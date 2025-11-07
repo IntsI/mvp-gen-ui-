@@ -16,7 +16,9 @@ function slotCtaLabel(n: NodeT): string | undefined {
 }
 
 function hasChildOf(n: NodeT, kind: NodeT["kind"]): boolean {
-  const children: NodeT[] = Array.isArray(n.children) ? (n.children as NodeT[]) : [];
+  const children: NodeT[] = Array.isArray(n.children)
+    ? (n.children as NodeT[])
+    : [];
   return children.some((c: NodeT) => c.kind === kind);
 }
 
@@ -25,21 +27,30 @@ function hasChildOf(n: NodeT, kind: NodeT["kind"]): boolean {
 function getCardTitle(n: NodeT): string | undefined {
   const self = slotText(n, "title");
   if (self) return self;
-  const child = (n.children ?? []).find((c) => c.kind === "Heading");
+
+  const child = (n.children ?? []).find(
+    (c: NodeT) => c.kind === "Heading"
+  );
   return child ? slotText(child, "title") : undefined;
 }
 
 function getCardBody(n: NodeT): string | undefined {
   const self = slotText(n, "body");
   if (self) return self;
-  const child = (n.children ?? []).find((c) => c.kind === "Text");
+
+  const child = (n.children ?? []).find(
+    (c: NodeT) => c.kind === "Text"
+  );
   return child ? slotText(child, "body") : undefined;
 }
 
 function getCardCta(n: NodeT): string | undefined {
   const self = slotCtaLabel(n);
   if (self) return self;
-  const child = (n.children ?? []).find((c) => c.kind === "Button");
+
+  const child = (n.children ?? []).find(
+    (c: NodeT) => c.kind === "Button"
+  );
   return child ? slotCtaLabel(child) : undefined;
 }
 
@@ -49,9 +60,9 @@ function getMediaSlot(
   const s = n.slots?.find((x: any) => x.slot === "media") as any;
   if (!s) return null;
 
-  const kind =
+  const kind: "placeholder" | "image" =
     s.kind === "image" || s.kind === "placeholder"
-      ? (s.kind as "image" | "placeholder")
+      ? s.kind
       : "placeholder";
 
   return {
@@ -171,15 +182,25 @@ function renderNode(
       }
 
       if (!hasHeadingChild && title) {
-        children.push(<DS.Heading key="auto-heading">{title}</DS.Heading>);
+        children.push(
+          <DS.Heading key="auto-heading">
+            {title}
+          </DS.Heading>
+        );
       }
 
       if (!hasTextChild && body) {
-        children.push(<DS.Text key="auto-text">{body}</DS.Text>);
+        children.push(
+          <DS.Text key="auto-text">
+            {body}
+          </DS.Text>
+        );
       }
 
       if (!hasButtonChild && cta) {
-        children.push(<DS.Button key="auto-cta" label={cta} />);
+        children.push(
+          <DS.Button key="auto-cta" label={cta} />
+        );
       }
 
       (n.children ?? []).forEach((c: NodeT, idx: number) => {
@@ -209,11 +230,18 @@ function renderNode(
       );
 
     case "Heading":
-      return <DS.Heading key={i}>{slotText(n, "title")}</DS.Heading>;
+      return (
+        <DS.Heading key={i}>
+          {slotText(n, "title")}
+        </DS.Heading>
+      );
 
     case "Text":
       return (
-        <DS.Text key={i} muted={Boolean((n.props as any)?.muted)}>
+        <DS.Text
+          key={i}
+          muted={Boolean((n.props as any)?.muted)}
+        >
           {slotText(n, "body")}
         </DS.Text>
       );
@@ -232,6 +260,8 @@ function renderNode(
 /* ---------- Public API ---------- */
 
 export function RenderUi({ spec }: { spec: UiSpec }) {
+  if (!spec || !Array.isArray(spec.components)) return null;
+
   return (
     <>
       {spec.components.map((c: NodeT, i: number) =>
