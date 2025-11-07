@@ -8,7 +8,6 @@ async function readJsonOrThrow(res: Response, label: string) {
   const ct = res.headers.get("content-type") || "";
   const text = await res.text(); // read once
   if (!res.ok) {
-    // server sent an error; show body if present
     let msg = text || `${label}: HTTP ${res.status}`;
     try {
       const j = JSON.parse(text);
@@ -19,21 +18,28 @@ async function readJsonOrThrow(res: Response, label: string) {
     throw new Error(msg);
   }
   if (!ct.includes("application/json")) {
-    // not json; include first 200 chars to help debugging
     throw new Error(`${label}: non-JSON response\n${text.slice(0, 200)}`);
   }
   try {
     return JSON.parse(text);
-  } catch (e) {
+  } catch {
     throw new Error(`${label}: JSON parse failed\n${text.slice(0, 200)}`);
   }
 }
 
 export default function Page() {
-  const [userIntent, setUserIntent] = useState("Weekend espresso sale. Friendly tone.");
-  const [businessIntent, setBusinessIntent] = useState("Highlight new subscription plan and collect emails.");
-  const [dos, setDos] = useState("Mention free shipping over 300 kr;");
-  const [donts, setDonts] = useState("No -50% claims; keep short;");
+  const [userIntent, setUserIntent] = useState(
+    "Looking for the newest foldable smartphone models."
+  );
+  const [businessIntent, setBusinessIntent] = useState(
+    "Promote pre-orders for Galaxy Z Fold 7 and Z Flip 7."
+  );
+  const [dos, setDos] = useState(
+    "Highlight innovation, flexibility, and exclusive pre-order bonuses. Include a strong visual hero."
+  );
+  const [donts, setDonts] = useState(
+    "Avoid technical specs or discount mentions — keep the tone premium and aspirational."
+  );
   const [spec, setSpec] = useState<UiSpec | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -126,7 +132,9 @@ export default function Page() {
           {loading ? "Generating…" : "Generate with ChatGPT"}
         </button>
 
-        {err && <p className="text-sm text-red-600 whitespace-pre-wrap">{err}</p>}
+        {err && (
+          <p className="text-sm text-red-600 whitespace-pre-wrap">{err}</p>
+        )}
       </section>
 
       {/* PREVIEW */}
@@ -135,7 +143,9 @@ export default function Page() {
         {spec ? (
           <RenderUi spec={spec} />
         ) : (
-          <div className="text-sm text-gray-500">No spec yet. Click Generate.</div>
+          <div className="text-sm text-gray-500">
+            No spec yet. Click Generate.
+          </div>
         )}
       </section>
     </main>

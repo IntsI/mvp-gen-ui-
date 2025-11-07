@@ -3,34 +3,88 @@ import * as DS from "@/components/ds";
 import type { UiSpec, NodeT } from "@/schemas/ui-spec";
 import React from "react";
 
-/** --- Slot helpers --- */
+/* ---------- Slot helpers ---------- */
+
 function slotText(n: NodeT, name: "title" | "body"): string | undefined {
   const s = n.slots?.find((x: any) => x.slot === name) as any;
   return s?.text ? String(s.text) : undefined;
 }
-function slotCta(n: NodeT): { label: string; action?: string } | undefined {
+
+function slotCtaLabel(n: NodeT): string | undefined {
   const s = n.slots?.find((x: any) => x.slot === "cta") as any;
-  if (!s?.label) return undefined;
-  return { label: String(s.label), action: s.action ? String(s.action) : undefined };
+  return s?.label ? String(s.label) : undefined;
 }
+
 function hasChildOf(n: NodeT, kind: NodeT["kind"]): boolean {
   const children: NodeT[] = Array.isArray(n.children) ? (n.children as NodeT[]) : [];
   return children.some((c: NodeT) => c.kind === kind);
 }
 
-/** --- Dispatch --- */
+/* ---------- Aggregate readers ---------- */
+
+function getCardTitle(n: NodeT): string | undefined {
+  const self = slotText(n, "title");
+  if (self) return self;
+  const child = (n.children ?? []).find((c) => c.kind === "Heading");
+  return child ? slotText(child, "title") : undefined;
+}
+
+function getCardBody(n: NodeT): string | undefined {
+  const self = slotText(n, "body");
+  if (self) return self;
+  const child = (n.children ?? []).find((c) => c.kind === "Text");
+  return child ? slotText(child, "body") : undefined;
+}
+
+function getCardCta(n: NodeT): string | undefined {
+  const self = slotCtaLabel(n);
+  if (self) return self;
+  const child = (n.children ?? []).find((c) => c.kind === "Button");
+  return child ? slotCtaLabel(child) : undefined;
+}
+
+function getMediaSlot(
+  n: NodeT
+): { kind: "placeholder" | "image"; id?: string } | null {
+  const s = n.slots?.find((x: any) => x.slot === "media") as any;
+  if (!s) return null;
+
+  const kind =
+    s.kind === "image" || s.kind === "placeholder"
+      ? (s.kind as "image" | "placeholder")
+      : "placeholder";
+
+  return {
+    kind,
+    id: typeof s.id === "string" ? s.id : undefined,
+  };
+}
+
+/* ---------- Dispatcher ---------- */
+
 function renderNode(
   n: NodeT,
   i: number,
-  _style: UiSpec["style"], // kept for signature compatibility (unused)
+  _style: UiSpec["style"],
   layout?: UiSpec["layout"]
 ): React.ReactNode {
   switch (n.kind) {
     case "Stage": {
-      // full-bleed for one-card-cta: Stage has no padding
-      const padded = layout !== "one-card-cta";
+      const isOneCard = layout === "one-card-cta";
+
+      if (isOneCard) {
+        // 400x400 frame; Card inside owns the visual chrome.
+        return (
+          <div key={i} className="w-[400px] h-[400px]">
+            {(n.children ?? []).map((c: NodeT, idx: number) =>
+              renderNode(c, idx, _style, layout)
+            )}
+          </div>
+        );
+      }
+
       return (
-        <DS.Stage key={i} padded={padded as any /* keep TS calm */}>
+        <DS.Stage key={i} padded={true as any}>
           {(n.children ?? []).map((c: NodeT, idx: number) =>
             renderNode(c, idx, _style, layout)
           )}
@@ -48,54 +102,111 @@ function renderNode(
       );
 
     case "Card": {
-      // Fixed styling: white + rounded-lg
+      const isOneCard = layout === "one-card-cta";
+
+      /* ----- one-card-cta hero layout ----- */
+      if (isOneCard) {
+        const title = getCardTitle(n);
+        const body = getCardBody(n);
+        const cta = getCardCta(n);
+        const media = getMediaSlot(n);
+
+        return (
+          <DS.Card
+            key={i}
+            bg="#FFFFFF"
+            radius="lg"
+            variant="block"
+            fullHeight={true}
+          >
+            <div className="flex flex-col h-full gap-4">
+              {/* Media on top: fills leftover vertical space */}
+              <div className="flex-1 flex items-stretch">
+                <DS.Media
+                  size="full"
+                  kind={media?.kind || "placeholder"}
+                  id={media?.id}
+                />
+              </div>
+
+              {/* Text */}
+              <div className="flex-none flex flex-col gap-2">
+                {title && <DS.Heading>{title}</DS.Heading>}
+                {body && <DS.Text>{body}</DS.Text>}
+              </div>
+
+              {/* CTA */}
+              {cta && (
+                <div className="flex-none">
+                  <DS.Button label={cta} />
+                </div>
+              )}
+            </div>
+          </DS.Card>
+        );
+      }
+
+      /* ----- default cards for other layouts ----- */
+
       const title = slotText(n, "title");
       const body = slotText(n, "body");
-      const cta = slotCta(n);
-
+      const cta = slotCtaLabel(n);
       const hasHeadingChild = hasChildOf(n, "Heading");
       const hasTextChild = hasChildOf(n, "Text");
       const hasButtonChild = hasChildOf(n, "Button");
       const hasMediaChild = hasChildOf(n, "Media");
-      const hasMediaSlot = (n.slots ?? []).some((s: any) => s.slot === "media");
+      const media = getMediaSlot(n);
 
-      const card = (
+      const children: React.ReactNode[] = [];
+
+      if (!hasMediaChild && media) {
+        children.push(
+          <DS.Media
+            key="slot-media"
+            size="full"
+            kind={media.kind}
+            id={media.id}
+          />
+        );
+      }
+
+      if (!hasHeadingChild && title) {
+        children.push(<DS.Heading key="auto-heading">{title}</DS.Heading>);
+      }
+
+      if (!hasTextChild && body) {
+        children.push(<DS.Text key="auto-text">{body}</DS.Text>);
+      }
+
+      if (!hasButtonChild && cta) {
+        children.push(<DS.Button key="auto-cta" label={cta} />);
+      }
+
+      (n.children ?? []).forEach((c: NodeT, idx: number) => {
+        children.push(renderNode(c, idx, _style, layout));
+      });
+
+      return (
         <DS.Card
           key={i}
           bg="#FFFFFF"
           radius="lg"
           variant={(n.props as any)?.variant || "block"}
         >
-          {/* If model added a media slot but no Media child, show a placeholder */}
-          {!hasMediaChild && hasMediaSlot && <DS.Media size="full" />}
-
-          {/* If model put copy on the Card slots (not as children), render them */}
-          {!hasHeadingChild && title && <DS.Heading>{title}</DS.Heading>}
-          {!hasTextChild && body && (
-            <DS.Text muted={Boolean((n.props as any)?.muted)}>{body}</DS.Text>
-          )}
-          {!hasButtonChild && cta?.label && <DS.Button label={cta.label} />}
-
-          {/* Then render any children that do exist */}
-          {(n.children ?? []).map((c: NodeT, idx: number) =>
-            renderNode(c, idx, _style, layout)
-          )}
+          {children}
         </DS.Card>
       );
-
-      // If we want the card to fill the 400x400 Stage, wrap with h-full
-      if (layout === "one-card-cta") {
-        return (
-          <div key={`wrap-${i}`} className="h-full">
-            {card}
-          </div>
-        );
-      }
-      return card;
     }
 
     case "Media":
-      return <DS.Media key={i} size={(n.props as any)?.size || "full"} />;
+      return (
+        <DS.Media
+          key={i}
+          size={(n.props as any)?.size || "full"}
+          kind={(n.props as any)?.kind || "placeholder"}
+          id={(n.props as any)?.id}
+        />
+      );
 
     case "Heading":
       return <DS.Heading key={i}>{slotText(n, "title")}</DS.Heading>;
@@ -108,10 +219,9 @@ function renderNode(
       );
 
     case "Button": {
-      // Prefer model-generated CTA; avoid deterministic fallback
-      const cta = slotCta(n);
-      if (!cta?.label) return null;
-      return <DS.Button key={i} label={cta.label} />;
+      const label = slotCtaLabel(n);
+      if (!label) return null;
+      return <DS.Button key={i} label={label} />;
     }
 
     default:
@@ -119,7 +229,8 @@ function renderNode(
   }
 }
 
-/** --- Public renderer --- */
+/* ---------- Public API ---------- */
+
 export function RenderUi({ spec }: { spec: UiSpec }) {
   return (
     <>
