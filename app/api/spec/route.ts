@@ -150,12 +150,12 @@ function ensureNonEmpty(spec: UiSpec, intent: any): UiSpec {
   }
 
   const first = spec.components[0];
-  if (first.kind !== "Stage") {
+  if (!first || first.kind !== "Stage") {
     return buildFallback(intent);
   }
 
-  const children = first.children || [];
-  const hasCard = children.some((c) => c.kind === "Card");
+  const children = (first.children || []) as NodeT[];
+  const hasCard = children.some((c: NodeT) => c.kind === "Card");
 
   if (!hasCard) {
     return buildFallback(intent);
