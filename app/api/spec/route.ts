@@ -3,20 +3,21 @@ export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
-import { UiSpecSchema, type UiSpec, type NodeT } from "@/schemas/ui-spec";
+import {
+  UiSpecSchema,
+  type UiSpec,
+  type NodeT,
+} from "@/schemas/ui-spec";
 
-/* ---------- OpenAI helper ---------- */
+/* ---------- OpenAI helper (no throw at import) ---------- */
 
-function getOpenAI() {
+function getOpenAI(): OpenAI | null {
   const key = process.env.OPENAI_API_KEY;
-  if (!key) {
-    console.warn("⚠️ Missing OPENAI_API_KEY at runtime");
-    throw new Error("Missing OPENAI_API_KEY");
-  }
+  if (!key) return null;
   return new OpenAI({ apiKey: key });
 }
 
-/* ---------- Normalizers (same semantics as original) ---------- */
+/* ---------- Normalizers ---------- */
 
 function normalizeCardSlotsToChildren(node: NodeT): NodeT {
   if (node.kind !== "Card") return node;
@@ -36,18 +37,14 @@ function normalizeCardSlotsToChildren(node: NodeT): NodeT {
   if (title && !hasHeading) {
     children.push({
       kind: "Heading",
-      slots: [
-        { slot: "title", text: String(title.text ?? "") },
-      ],
+      slots: [{ slot: "title", text: String(title.text ?? "") }],
     } as any);
   }
 
   if (body && !hasText) {
     children.push({
       kind: "Text",
-      slots: [
-        { slot: "body", text: String(body.text ?? "") },
-      ],
+      slots: [{ slot: "body", text: String(body.text ?? "") }],
     } as any);
   }
 
@@ -64,7 +61,6 @@ function normalizeCardSlotsToChildren(node: NodeT): NodeT {
     } as any);
   }
 
-  // Keep non-text slots (e.g. media)
   const remainingSlots = (node.slots ?? []).filter(
     (s: any) => !["title", "body", "cta"].includes(s.slot)
   );
@@ -131,7 +127,6 @@ function buildFallback(intent: any): UiSpec {
                 label: intent?.cta || "Learn more",
                 action: "cta.click",
               },
-              // no media here -> placeholder in UI if you want
             ],
           },
         ],
@@ -140,26 +135,15 @@ function buildFallback(intent: any): UiSpec {
   };
 }
 
-/**
- * Ensure we don't end up with an empty Stage.
- * If there's no Card inside the first Stage, fall back to a simple one-card-cta.
- */
 function ensureNonEmpty(spec: UiSpec, intent: any): UiSpec {
-  if (!spec.components?.length) {
-    return buildFallback(intent);
-  }
+  if (!spec.components?.length) return buildFallback(intent);
 
   const first = spec.components[0];
-  if (!first || first.kind !== "Stage") {
-    return buildFallback(intent);
-  }
+  if (!first || first.kind !== "Stage") return buildFallback(intent);
 
   const children = (first.children || []) as NodeT[];
   const hasCard = children.some((c: NodeT) => c.kind === "Card");
-
-  if (!hasCard) {
-    return buildFallback(intent);
-  }
+  if (!hasCard) return buildFallback(intent);
 
   return spec;
 }
@@ -170,6 +154,15 @@ export async function POST(req: NextRequest) {
   try {
     const { intent } = await req.json();
     const openai = getOpenAI();
+
+    // No key → use deterministic fallback spec (prevents build-time failure)
+    if (!openai) {
+      console.warn(
+        "[api/spec] OPENAI_API_KEY missing – returning fallback UiSpec"
+      );
+      const fallback = buildFallback(intent);
+      return NextResponse.json(fallback);
+    }
 
     const system = `
 You generate a UiSpec JSON for a small 400x400 marketing surface.
@@ -190,21 +183,6 @@ Slots:
 - body:  { "slot": "body",  "text": string (<= 220 chars) }
 - cta:   { "slot": "cta",   "label": string (<= 28), "action": string (<= 120) }
 - media: { "slot": "media", "kind": "placeholder" | "image", "id"?: string }
-
-Media catalog:
-If you use kind:"image", id MUST be exactly one of:
-- "fold-flip-combo"   (Galaxy Z Fold / Z Flip / foldable campaigns)
-- "monitor-paradigm"  (monitor / desktop / workspace)
-- "watch-ultra"       (Galaxy Watch Ultra / rugged / fitness / outdoor)
-- "watch8-combo"      (Galaxy Watch8 / lifestyle / everyday wellness)
-- "s24-fe-banner"     (Galaxy S24 FE / phone hero / banner promos)
-- "tab-s10-hero"      (Galaxy Tab S10 / tablet + AI productivity)
-
-When intent clearly matches one of these themes, you MAY add:
-{ "slot": "media", "kind": "image", "id": "<one of above>" }
-on the main Card.
-If no clear match, either omit media or use:
-{ "slot": "media", "kind": "placeholder" }.
 
 Style (fixed):
 "style": { "bg": "#FFFFFF", "radius": "lg" }
@@ -255,15 +233,12 @@ Return UiSpec:
       json = {};
     }
 
-    // Normalize generated content
     if (Array.isArray(json?.components)) {
       json.components = json.components.map((n: NodeT) => normalizeTree(n));
     }
 
-    // Enforce style
     json.style = { bg: "#FFFFFF", radius: "lg" };
 
-    // If components missing, start from fallback
     if (!Array.isArray(json?.components) || !json.components.length) {
       json = buildFallback(intent);
     } else {
@@ -275,19 +250,20 @@ Return UiSpec:
       json = ensureStage(tmp);
     }
 
-    // Validate candidate
     const validated = UiSpecSchema.safeParse(json);
     if (validated.success) {
       const safe = ensureNonEmpty(validated.data, intent);
       return NextResponse.json(safe);
     }
 
-    console.error("UiSpec validation failed:", validated.error.flatten());
-
+    console.error(
+      "[api/spec] UiSpec validation failed:",
+      validated.error.flatten()
+    );
     const fallback = buildFallback(intent);
     return NextResponse.json(fallback);
   } catch (e: any) {
-    console.error("spec_failed:", e?.message || e);
+    console.error("[api/spec] spec_failed:", e?.message || e);
     return NextResponse.json(
       { error: "spec_failed", message: String(e?.message || e) },
       { status: 500 }

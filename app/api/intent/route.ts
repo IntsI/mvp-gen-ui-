@@ -1,32 +1,34 @@
 export const dynamic = "force-dynamic";
-export const runtime = "nodejs"; // ensure Node runtime for OpenAI SDK
+export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { z } from "zod";
 
-// Lazy init so env is read at runtime
-function getOpenAI() {
+/** Lazy OpenAI client: never throw at import / build time */
+function getOpenAI(): OpenAI | null {
   const key = process.env.OPENAI_API_KEY;
-  if (!key) {
-    console.warn("⚠️ Missing OPENAI_API_KEY at runtime");
-    throw new Error("Missing OPENAI_API_KEY");
-  }
+  if (!key) return null;
   return new OpenAI({ apiKey: key });
 }
 
-// Coerce array -> single string
+/** Coerce array / weird values -> single string */
 function asText(v: unknown): string | undefined {
   if (v == null) return undefined;
   if (typeof v === "string") return v;
-  if (Array.isArray(v)) return v.filter(x => typeof x === "string").join(" ").trim() || undefined;
+  if (Array.isArray(v)) {
+    const joined = v.filter((x) => typeof x === "string").join(" ").trim();
+    return joined || undefined;
+  }
   return String(v);
 }
 
-// Intent schema (CTA required so LLM always decides)
+/** Intent schema */
 const Intent = z.object({
   goal: z.string().max(200),
-  tone: z.enum(["neutral", "friendly", "promo", "informative"]).default("friendly"),
+  tone: z
+    .enum(["neutral", "friendly", "promo", "informative"])
+    .default("friendly"),
   layout: z.enum(["two-block-cards", "three-list-items", "one-card-cta"]),
   title: z.string().max(60).optional(),
   body: z.string().max(220).optional(),
@@ -36,15 +38,8 @@ type IntentT = z.infer<typeof Intent>;
 
 export async function POST(req: NextRequest) {
   try {
-    console.log("🟡 /api/intent called");
-
-    const { userIntent, businessIntent, dos, donts, prompt } = await req.json().catch(() => ({} as any));
-    if (!userIntent && !prompt) {
-      return NextResponse.json(
-        { error: "bad_request", message: "userIntent or prompt is required" },
-        { status: 400 }
-      );
-    }
+    const body = (await req.json().catch(() => ({}))) as any;
+    const { userIntent, businessIntent, dos, donts, prompt } = body;
 
     const combined =
       prompt ??
@@ -55,6 +50,26 @@ export async function POST(req: NextRequest) {
         `DONTS: ${donts ?? ""}`,
       ].join("\n");
 
+    const openai = getOpenAI();
+
+    // No API key available → deterministic fallback so build never fails
+    if (!openai) {
+      console.warn(
+        "[api/intent] OPENAI_API_KEY missing – returning static fallback intent"
+      );
+      const fallback: IntentT = {
+        goal:
+          "Preview-only: configure OPENAI_API_KEY to generate AI-driven intents.",
+        tone: "friendly",
+        layout: "one-card-cta",
+        title: "Set up your AI configuration",
+        body:
+          "Add your OpenAI API key in the environment to let this tool turn user & business intents into UI-ready copy.",
+        cta: "Got it",
+      };
+      return NextResponse.json(fallback);
+    }
+
     const system =
       `Extract a compact marketing intent JSON.\n` +
       `Choose ONE layout: two-block-cards | three-list-items | one-card-cta.\n` +
@@ -63,21 +78,20 @@ export async function POST(req: NextRequest) {
 
     const userMsg =
       `PROMPT:\n${combined}\n\n` +
-      `Return JSON object with keys: goal, tone("neutral"|"friendly"|"promo"|"informative"), layout, title?, body?, cta.`;
-
-    const openai = getOpenAI();
-    console.log("🔵 OpenAI request → gpt-4o-mini");
+      `Return JSON object with keys: goal, tone("neutral"|"friendly"|"promo"|"informative"), ` +
+      `layout, title?, body?, cta.`;
 
     const r = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0.7,
       response_format: { type: "json_object" },
-      messages: [{ role: "system", content: system }, { role: "user", content: userMsg }],
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userMsg },
+      ],
     });
 
     const rawText = r.choices?.[0]?.message?.content ?? "{}";
-    console.log("🟣 OpenAI response length:", rawText.length);
-
     let raw: any = {};
     try {
       raw = JSON.parse(rawText);
@@ -96,17 +110,16 @@ export async function POST(req: NextRequest) {
 
     const out = Intent.safeParse(normalized);
     if (!out.success) {
-      console.warn("⚠️ intent_parse_failed", out.error.issues);
+      console.warn("[api/intent] intent_parse_failed", out.error.issues);
       return NextResponse.json(
         { error: "intent_parse_failed", issues: out.error.issues, raw },
         { status: 400 }
       );
     }
 
-    console.log("✅ intent ok");
     return NextResponse.json(out.data satisfies IntentT);
   } catch (err: any) {
-    console.error("❌ intent_failed:", err?.message || err);
+    console.error("[api/intent] intent_failed:", err?.message || err);
     return NextResponse.json(
       { error: "intent_failed", message: String(err?.message || err) },
       { status: 500 }
