@@ -44,21 +44,27 @@ function hasChildOf(n: NodeT, kind: NodeT["kind"]): boolean {
 function getCardTitle(n: NodeT): string | undefined {
   const self = slotText(n, "title");
   if (self) return self;
-  const child = (n.children ?? []).find((c) => c.kind === "Heading");
+  const child = (n.children ?? []).find(
+    (c: NodeT) => c.kind === "Heading"
+  );
   return child ? slotText(child, "title") : undefined;
 }
 
 function getCardBody(n: NodeT): string | undefined {
   const self = slotText(n, "body");
   if (self) return self;
-  const child = (n.children ?? []).find((c) => c.kind === "Text");
+  const child = (n.children ?? []).find(
+    (c: NodeT) => c.kind === "Text"
+  );
   return child ? slotText(child, "body") : undefined;
 }
 
 function getCardCta(n: NodeT): string | undefined {
   const self = slotCtaLabel(n);
   if (self) return self;
-  const child = (n.children ?? []).find((c) => c.kind === "Button");
+  const child = (n.children ?? []).find(
+    (c: NodeT) => c.kind === "Button"
+  );
   return child ? slotCtaLabel(child) : undefined;
 }
 
@@ -75,7 +81,8 @@ function renderNode(
       const isOneCard = layout === "one-card-cta";
 
       if (isOneCard) {
-        // Stage is the fixed 400x400 viewport; Card inside owns the chrome.
+        // For one-card-cta: Stage is just the 400x400 viewport.
+        // The child Card owns the chrome.
         return (
           <div
             key={i}
@@ -88,7 +95,7 @@ function renderNode(
         );
       }
 
-      // Other layouts: normal Stage wrapper
+      // Other layouts: standard Stage wrapper
       return (
         <DS.Stage key={i} padded={true as any}>
           {(n.children ?? []).map((c: NodeT, idx: number) =>
@@ -110,7 +117,6 @@ function renderNode(
     case "Card": {
       const isOneCard = layout === "one-card-cta";
 
-      /* ---------- One-card hero layout ---------- */
       if (isOneCard) {
         const title = getCardTitle(n);
         const body = getCardBody(n);
@@ -125,11 +131,11 @@ function renderNode(
             variant="block"
             fullHeight={true}
           >
-            {/* Flex column that fills the card */}
-            <div className="flex flex-col gap-3 h-full">
-              {/* Media: fills all remaining vertical space; min-h-0 so it can shrink */}
+            {/* Full-height column inside the fixed 400x400 frame */}
+            <div className="flex flex-col h-full gap-3">
+              {/* Media: uses remaining vertical space above text/CTA (cover style) */}
               {media && (
-                <div className="flex-1 min-h-0">
+                <div className="flex-1 w-full overflow-hidden rounded-xl">
                   <DS.Media
                     size="cover"
                     kind={media.kind}
@@ -138,7 +144,7 @@ function renderNode(
                 </div>
               )}
 
-              {/* Text stack (intrinsic height) */}
+              {/* Text stack */}
               {(title || body) && (
                 <div className="flex-none flex flex-col gap-1">
                   {title && <DS.Heading>{title}</DS.Heading>}
@@ -146,7 +152,7 @@ function renderNode(
                 </div>
               )}
 
-              {/* CTA pinned at bottom */}
+              {/* CTA pinned to bottom */}
               {cta && (
                 <div className="flex-none">
                   <DS.Button label={cta} />
@@ -157,7 +163,7 @@ function renderNode(
         );
       }
 
-      /* ---------- Default cards for other layouts ---------- */
+      // ----- default cards for other layouts -----
 
       const title = slotText(n, "title");
       const body = slotText(n, "body");
@@ -183,15 +189,21 @@ function renderNode(
       }
 
       if (!hasHeadingChild && title) {
-        children.push(<DS.Heading key="auto-heading">{title}</DS.Heading>);
+        children.push(
+          <DS.Heading key="auto-heading">{title}</DS.Heading>
+        );
       }
 
       if (!hasTextChild && body) {
-        children.push(<DS.Text key="auto-text">{body}</DS.Text>);
+        children.push(
+          <DS.Text key="auto-text">{body}</DS.Text>
+        );
       }
 
       if (!hasButtonChild && cta) {
-        children.push(<DS.Button key="auto-cta" label={cta} />);
+        children.push(
+          <DS.Button key="auto-cta" label={cta} />
+        );
       }
 
       (n.children ?? []).forEach((c: NodeT, idx: number) => {
@@ -221,11 +233,18 @@ function renderNode(
       );
 
     case "Heading":
-      return <DS.Heading key={i}>{slotText(n, "title")}</DS.Heading>;
+      return (
+        <DS.Heading key={i}>
+          {slotText(n, "title")}
+        </DS.Heading>
+      );
 
     case "Text":
       return (
-        <DS.Text key={i} muted={Boolean((n.props as any)?.muted)}>
+        <DS.Text
+          key={i}
+          muted={Boolean((n.props as any)?.muted)}
+        >
           {slotText(n, "body")}
         </DS.Text>
       );
