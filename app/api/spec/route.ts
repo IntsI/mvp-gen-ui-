@@ -5,10 +5,16 @@ import { mediaCatalog } from "@/lib/media-catalog";
 import type { UiSpec } from "@/schemas/ui-spec";
 
 const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
+  apiKey: process.env.OPENAI_API_KEY ?? process.env.OPEN_AI_KEY ?? "",
 });
 
-// Expose catalog to the model in a readable way
+if (!client.apiKey) {
+  throw new Error(
+    "Missing OpenAI API key. Set OPENAI_API_KEY or OPEN_AI_KEY in environment."
+  );
+}
+
+// Make catalog visible to the model
 const MEDIA_LIBRARY = Object.entries(mediaCatalog).map(([id, url]) => ({
   id,
   description: id
@@ -18,6 +24,34 @@ const MEDIA_LIBRARY = Object.entries(mediaCatalog).map(([id, url]) => ({
 }));
 
 const ALL_MEDIA_IDS = Object.keys(mediaCatalog);
+
+/* ---------- generic helpers ---------- */
+
+function tokenize(str: string): string[] {
+  return str
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((t) => t.replace(/[0-9]+/g, "")) // watch8 -> watch
+    .filter((t) => t.length >= 3);
+}
+
+/**
+ * Generic semantic relevance:
+ * overlap between cleaned id tokens and intent tokens.
+ * 0 = no match; higher = better.
+ */
+function scoreMediaIdForIntent(id: string, intent: any): number {
+  const intentTokens = new Set(tokenize(JSON.stringify(intent || {})));
+  const idTokens = tokenize(id);
+
+  if (!idTokens.length || !intentTokens.size) return 0;
+
+  let score = 0;
+  for (const t of idTokens) {
+    if (intentTokens.has(t)) score += 1;
+  }
+  return score;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -42,7 +76,7 @@ Return ONLY valid JSON. No markdown, no comments, no explanations.
   ]
 }
 
-CardNode schema:
+CardNode:
 
 {
   "kind": "Card",
@@ -52,55 +86,43 @@ CardNode schema:
     { "slot": "cta", "label": string },
     {
       "slot": "media",
-      "kind": "image",
-      "id": string
+      "kind": "image" | "placeholder",
+      "id"?: string
     }
   ]
 }
 
 ### Image library
 
-These are the only valid "media.id" values:
+You may use ONLY these ids for "media.id":
 
 ${JSON.stringify(MEDIA_LIBRARY, null, 2)}
 
-Interpretation guidelines (very important):
+### Media selection rules (IMPORTANT)
 
-- Infer product/category from the id:
-  - ids containing "tab"  -> Galaxy Tab / tablet visuals
-  - ids containing "fold" or "flip" or "combo" -> foldable phones
-  - ids containing "watch" -> Galaxy Watch / wearables
-  - ids containing "s24" -> Galaxy S24 phones
-  - others: infer from their wording
-- When the campaign intent is focused on ONE category:
-  - ONLY use ids that match that category.
-  - Example: if the brief is only about Galaxy Tab,
-    do NOT use "fold", "flip", "watch", "s24" images.
-- When the intent clearly mentions MULTIPLE categories (ecosystem):
-  - you MAY mix relevant ids from those categories.
-- Always choose ids that are semantically consistent with:
-  - product(s) mentioned in BUSINESS INTENT and USER INTENT
-  - tone and story of the copy you generate.
+- First, infer the campaign's main product/category from the intent:
+  brand, series, device type, etc.
+- If one or more library ids clearly match that product/category:
+  - Use them with "kind": "image".
+  - You may reuse ids or mix several relevant ones.
+- If NONE of the library ids clearly match the campaign
+  (e.g. library is Samsung-only but intent is about iPhone):
+  - Use "kind": "placeholder" and omit "id" for those cards instead of forcing a wrong brand.
+- Never intentionally misrepresent a different brand or product line.
 
 ### Card content rules
 
-For each of the 4 cards:
-
-- "title": short, strong, campaign-appropriate.
-- "body": 1–3 concise sentences; reflect the specific angle of that card.
-- "cta": clear action (e.g. "Pre-order Now", "See Bonuses", "Explore Features").
-- "media":
-  - { "slot": "media", "kind": "image", "id": <one of the allowed ids> }
-
-Global:
-
-- EXACTLY 4 cards in Stage.children.
-- All copy MUST be derived from the provided intent:
-  - reflect user intent & business intent,
-  - respect DOs and DON'Ts,
-  - keep tone premium and aspirational.
-- Make the 4 cards distinct (hero, benefits, lifestyle, bonuses, etc.).
-- Do NOT output any fields outside the described schema.
+- Exactly 4 cards.
+- Each card:
+  - "title": short, strong.
+  - "body": 1–3 concise sentences aligned to that card's angle.
+  - "cta": clear action.
+  - "media": as defined above.
+- Copy MUST be derived from the given intent:
+  respect user intent, business intent, DOs and DON'Ts.
+  Tone: premium, aspirational, brand-safe.
+- Cards should be distinct (hero, benefits, lifestyle, bonuses, etc.).
+- No extra fields beyond this schema.
     `.trim();
 
     const messages = [
@@ -118,7 +140,7 @@ Global:
     const raw = completion.choices[0]?.message?.content || "{}";
     const spec = JSON.parse(raw) as UiSpec;
 
-    // ---- structural validation only ----
+    /* ---------- structural validation ---------- */
 
     if (spec.layout !== "four-cards-cta") {
       throw new Error("layout must be 'four-cards-cta'");
@@ -136,6 +158,8 @@ Global:
       throw new Error("Stage must contain exactly 4 cards");
     }
 
+    /* ---------- slot + media post-processing ---------- */
+
     for (const [i, card] of stage.children.entries()) {
       if (card.kind !== "Card" || !Array.isArray(card.slots)) {
         throw new Error(`Card #${i} is malformed`);
@@ -152,18 +176,31 @@ Global:
         );
       }
 
-      if (media.kind !== "image") {
-        throw new Error(`Card #${i} media.kind must be "image"`);
+      // Ensure cta.action is optional
+      if (cta.action && typeof cta.action !== "string") {
+        delete cta.action;
       }
 
-      if (!ALL_MEDIA_IDS.includes(media.id)) {
-        throw new Error(
-          `Card #${i} media.id "${media.id}" is not in mediaCatalog`
-        );
+      // Normalize media semantics **without** product-specific rules:
+      if (media.kind === "image") {
+        if (typeof media.id !== "string" || !ALL_MEDIA_IDS.includes(media.id)) {
+          // invalid id -> degrade to placeholder
+          media.kind = "placeholder";
+          delete media.id;
+        } else {
+          const relevance = scoreMediaIdForIntent(media.id, intent);
+          if (relevance <= 0) {
+            // image has no semantic overlap with intent -> use placeholder instead
+            media.kind = "placeholder";
+            delete media.id;
+          }
+        }
+      } else {
+        // placeholder is always allowed; make sure id is not misleading
+        delete media.id;
       }
     }
 
-    // No corrections: image choices are exactly what the model decided.
     return NextResponse.json(spec);
   } catch (err: any) {
     console.error("❌ /api/spec error", err);
