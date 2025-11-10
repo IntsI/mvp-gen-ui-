@@ -1,272 +1,177 @@
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
-
+// app/api/spec/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
-import {
-  UiSpecSchema,
-  type UiSpec,
-  type NodeT,
-} from "@/schemas/ui-spec";
+import { mediaCatalog } from "@/lib/media-catalog";
+import type { UiSpec } from "@/schemas/ui-spec";
 
-/* ---------- OpenAI helper (no throw at import) ---------- */
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
+});
 
-function getOpenAI(): OpenAI | null {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) return null;
-  return new OpenAI({ apiKey: key });
-}
+// Expose catalog to the model in a readable way
+const MEDIA_LIBRARY = Object.entries(mediaCatalog).map(([id, url]) => ({
+  id,
+  description: id
+    .replace(/[-_]/g, " ")
+    .replace(/\b\w/g, (m) => m.toUpperCase()),
+  exampleUrl: url,
+}));
 
-/* ---------- Normalizers ---------- */
-
-function normalizeCardSlotsToChildren(node: NodeT): NodeT {
-  if (node.kind !== "Card") return node;
-
-  const children: NodeT[] = Array.isArray(node.children)
-    ? [...node.children]
-    : [];
-
-  const title = node.slots?.find((s: any) => s.slot === "title") as any;
-  const body = node.slots?.find((s: any) => s.slot === "body") as any;
-  const cta = node.slots?.find((s: any) => s.slot === "cta") as any;
-
-  const hasHeading = children.some((c) => c.kind === "Heading");
-  const hasText = children.some((c) => c.kind === "Text");
-  const hasButton = children.some((c) => c.kind === "Button");
-
-  if (title && !hasHeading) {
-    children.push({
-      kind: "Heading",
-      slots: [{ slot: "title", text: String(title.text ?? "") }],
-    } as any);
-  }
-
-  if (body && !hasText) {
-    children.push({
-      kind: "Text",
-      slots: [{ slot: "body", text: String(body.text ?? "") }],
-    } as any);
-  }
-
-  if (cta && !hasButton && cta.label) {
-    children.push({
-      kind: "Button",
-      slots: [
-        {
-          slot: "cta",
-          label: String(cta.label),
-          action: String(cta.action ?? "cta.click"),
-        },
-      ],
-    } as any);
-  }
-
-  const remainingSlots = (node.slots ?? []).filter(
-    (s: any) => !["title", "body", "cta"].includes(s.slot)
-  );
-
-  return {
-    ...node,
-    slots: remainingSlots.length ? remainingSlots : undefined,
-    children,
-  };
-}
-
-function normalizeTree(node: NodeT): NodeT {
-  let out = node;
-  if (out.kind === "Card") out = normalizeCardSlotsToChildren(out);
-  if (Array.isArray(out.children)) {
-    out = { ...out, children: out.children.map(normalizeTree) };
-  }
-  return out;
-}
-
-function ensureStage(spec: UiSpec): UiSpec {
-  const first = spec.components?.[0];
-  if (first && first.kind === "Stage") return spec;
-
-  return {
-    ...spec,
-    components: [
-      {
-        kind: "Stage",
-        children: spec.components as any,
-      } as any,
-    ],
-  };
-}
-
-/* ---------- Fallback + safety ---------- */
-
-function buildFallback(intent: any): UiSpec {
-  return {
-    layout: "one-card-cta",
-    style: { bg: "#FFFFFF", radius: "lg" },
-    components: [
-      {
-        kind: "Stage",
-        children: [
-          {
-            kind: "Card",
-            slots: [
-              {
-                slot: "title",
-                text:
-                  intent?.title ||
-                  intent?.goal ||
-                  "Welcome",
-              },
-              {
-                slot: "body",
-                text:
-                  intent?.body ||
-                  "Stay tuned for our latest offers and updates.",
-              },
-              {
-                slot: "cta",
-                label: intent?.cta || "Learn more",
-                action: "cta.click",
-              },
-            ],
-          },
-        ],
-      },
-    ],
-  };
-}
-
-function ensureNonEmpty(spec: UiSpec, intent: any): UiSpec {
-  if (!spec.components?.length) return buildFallback(intent);
-
-  const first = spec.components[0];
-  if (!first || first.kind !== "Stage") return buildFallback(intent);
-
-  const children = (first.children || []) as NodeT[];
-  const hasCard = children.some((c: NodeT) => c.kind === "Card");
-  if (!hasCard) return buildFallback(intent);
-
-  return spec;
-}
-
-/* ---------- Handler ---------- */
+const ALL_MEDIA_IDS = Object.keys(mediaCatalog);
 
 export async function POST(req: NextRequest) {
   try {
     const { intent } = await req.json();
-    const openai = getOpenAI();
+    const intentText = JSON.stringify(intent || {});
 
-    // No key → deterministic fallback (avoids build-time failure)
-    if (!openai) {
-      console.warn(
-        "[api/spec] OPENAI_API_KEY missing – returning fallback UiSpec"
-      );
-      const fallback = buildFallback(intent);
-      return NextResponse.json(fallback);
-    }
+    const systemPrompt = `
+You generate a UiSpec JSON for a 2x2 grid of promotional cards.
 
-    const system = `
-You generate a UiSpec JSON for a small 400x400 marketing surface.
+Return ONLY valid JSON. No markdown, no comments, no explanations.
 
-Allowed node kinds ONLY:
-- "Stage" | "Grid" | "Card" | "Media" | "Heading" | "Text" | "Button"
+### UiSpec schema
 
-Slots:
-- title: { "slot": "title", "text": string (<= 60) }
-- body:  { "slot": "body",  "text": string (<= 220) }
-- cta:   { "slot": "cta",   "label": string (<= 28), "action": string (<= 120) }
-- media: { "slot": "media", "kind": "placeholder" | "image", "id"?: string }
-
-Media catalog (for kind:"image"):
-- "fold-flip-combo"  : Galaxy Z Fold / Z Flip / foldable hero
-- "monitor-paradigm" : Monitor / desktop / workspace
-- "watch-ultra"      : Galaxy Watch Ultra / rugged / fitness
-- "watch8-combo"     : Galaxy Watch8 / lifestyle
-- "s24-fe-banner"    : Galaxy S24 FE / phone hero
-- "tab-s10-hero"     : Galaxy Tab S10 / tablet + AI productivity
-
-If the intent CLEARLY matches one of these themes, you SHOULD add
-exactly one media slot on the main Card:
-{ "slot": "media", "kind": "image", "id": "<one-of-above>" }.
-
-If there is no clear match, you MAY:
-- use { "slot": "media", "kind": "placeholder" } on the main Card, or
-- omit media entirely.
-
-Style is fixed:
-"style": { "bg": "#FFFFFF", "radius": "lg" }
-
-Layout:
-- Use "one-card-cta" for a single hero surface.
-- Otherwise you may choose "two-block-cards" | "three-list-items" | "four-grid-cards".
-
-Always:
-- Start with a Stage as root.
-- Keep copy concise and within limits.
-- Return ONLY valid JSON (no markdown, no comments).
-`.trim();
-
-    const user = `
-INTENT JSON:
-${JSON.stringify(intent, null, 2)}
-
-Return UiSpec:
 {
-  "layout": "...",
-  "style": { "bg": "#FFFFFF", "radius": "lg" },
-  "components": [ ... ]
+  "layout": "four-cards-cta",
+  "style": {},
+  "components": [
+    {
+      "kind": "Stage",
+      "children": [CardNode, CardNode, CardNode, CardNode]
+    }
+  ]
 }
-`.trim();
 
-    const r = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.6,
+CardNode schema:
+
+{
+  "kind": "Card",
+  "slots": [
+    { "slot": "title", "text": string },
+    { "slot": "body", "text": string },
+    { "slot": "cta", "label": string },
+    {
+      "slot": "media",
+      "kind": "image",
+      "id": string
+    }
+  ]
+}
+
+### Image library
+
+These are the only valid "media.id" values:
+
+${JSON.stringify(MEDIA_LIBRARY, null, 2)}
+
+Interpretation guidelines (very important):
+
+- Infer product/category from the id:
+  - ids containing "tab"  -> Galaxy Tab / tablet visuals
+  - ids containing "fold" or "flip" or "combo" -> foldable phones
+  - ids containing "watch" -> Galaxy Watch / wearables
+  - ids containing "s24" -> Galaxy S24 phones
+  - others: infer from their wording
+- When the campaign intent is focused on ONE category:
+  - ONLY use ids that match that category.
+  - Example: if the brief is only about Galaxy Tab,
+    do NOT use "fold", "flip", "watch", "s24" images.
+- When the intent clearly mentions MULTIPLE categories (ecosystem):
+  - you MAY mix relevant ids from those categories.
+- Always choose ids that are semantically consistent with:
+  - product(s) mentioned in BUSINESS INTENT and USER INTENT
+  - tone and story of the copy you generate.
+
+### Card content rules
+
+For each of the 4 cards:
+
+- "title": short, strong, campaign-appropriate.
+- "body": 1–3 concise sentences; reflect the specific angle of that card.
+- "cta": clear action (e.g. "Pre-order Now", "See Bonuses", "Explore Features").
+- "media":
+  - { "slot": "media", "kind": "image", "id": <one of the allowed ids> }
+
+Global:
+
+- EXACTLY 4 cards in Stage.children.
+- All copy MUST be derived from the provided intent:
+  - reflect user intent & business intent,
+  - respect DOs and DON'Ts,
+  - keep tone premium and aspirational.
+- Make the 4 cards distinct (hero, benefits, lifestyle, bonuses, etc.).
+- Do NOT output any fields outside the described schema.
+    `.trim();
+
+    const messages = [
+      { role: "system" as const, content: systemPrompt },
+      { role: "user" as const, content: intentText },
+    ];
+
+    const completion = await client.chat.completions.create({
+      model: "gpt-4.1-mini",
+      temperature: 0.95,
       response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
+      messages,
     });
 
-    let json: any = {};
-    try {
-      json = JSON.parse(r.choices[0]?.message?.content || "{}");
-    } catch {
-      json = {};
+    const raw = completion.choices[0]?.message?.content || "{}";
+    const spec = JSON.parse(raw) as UiSpec;
+
+    // ---- structural validation only ----
+
+    if (spec.layout !== "four-cards-cta") {
+      throw new Error("layout must be 'four-cards-cta'");
     }
 
-    if (Array.isArray(json?.components)) {
-      json.components = json.components.map((n: NodeT) => normalizeTree(n));
+    if (!Array.isArray(spec.components) || spec.components.length === 0) {
+      throw new Error("Missing components");
     }
 
-    json.style = { bg: "#FFFFFF", radius: "lg" };
-
-    if (!Array.isArray(json?.components) || !json.components.length) {
-      json = buildFallback(intent);
-    } else {
-      const tmp: UiSpec = {
-        layout: json.layout ?? "one-card-cta",
-        style: json.style,
-        components: json.components,
-      };
-      json = ensureStage(tmp);
+    const stage: any = spec.components[0];
+    if (!stage || stage.kind !== "Stage" || !Array.isArray(stage.children)) {
+      throw new Error("First component must be a Stage with children");
+    }
+    if (stage.children.length !== 4) {
+      throw new Error("Stage must contain exactly 4 cards");
     }
 
-    const validated = UiSpecSchema.safeParse(json);
-    if (validated.success) {
-      const safe = ensureNonEmpty(validated.data, intent);
-      return NextResponse.json(safe);
+    for (const [i, card] of stage.children.entries()) {
+      if (card.kind !== "Card" || !Array.isArray(card.slots)) {
+        throw new Error(`Card #${i} is malformed`);
+      }
+
+      const title = card.slots.find((s: any) => s.slot === "title");
+      const body = card.slots.find((s: any) => s.slot === "body");
+      const cta = card.slots.find((s: any) => s.slot === "cta");
+      const media = card.slots.find((s: any) => s.slot === "media");
+
+      if (!title?.text || !body?.text || !cta?.label || !media) {
+        throw new Error(
+          `Card #${i} must include title, body, cta, and media slots`
+        );
+      }
+
+      if (media.kind !== "image") {
+        throw new Error(`Card #${i} media.kind must be "image"`);
+      }
+
+      if (!ALL_MEDIA_IDS.includes(media.id)) {
+        throw new Error(
+          `Card #${i} media.id "${media.id}" is not in mediaCatalog`
+        );
+      }
     }
 
-    console.error(
-      "[api/spec] UiSpec validation failed:",
-      validated.error.flatten()
-    );
-    const fallback = buildFallback(intent);
-    return NextResponse.json(fallback);
-  } catch (e: any) {
-    console.error("[api/spec] spec_failed:", e?.message || e);
+    // No corrections: image choices are exactly what the model decided.
+    return NextResponse.json(spec);
+  } catch (err: any) {
+    console.error("❌ /api/spec error", err);
     return NextResponse.json(
-      { error: "spec_failed", message: String(e?.message || e) },
+      {
+        error: "Failed to generate spec",
+        detail: String(err?.message ?? err),
+      },
       { status: 500 }
     );
   }

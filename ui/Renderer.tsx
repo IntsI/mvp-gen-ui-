@@ -73,33 +73,54 @@ function getCardCta(n: NodeT): string | undefined {
 function renderNode(
   n: NodeT,
   i: number,
-  _style: UiSpec["style"],
+  style: UiSpec["style"],
   layout?: UiSpec["layout"]
 ): React.ReactNode {
   switch (n.kind) {
     case "Stage": {
       const isOneCard = layout === "one-card-cta";
+      const isFourCards = layout === "four-cards-cta";
 
       if (isOneCard) {
-        // For one-card-cta: Stage is just the 400x400 viewport.
-        // The child Card owns the chrome.
+        // Single card in fixed 400x400 viewport
         return (
           <div
             key={i}
             className="w-[400px] h-[400px] flex items-stretch justify-stretch"
           >
             {(n.children ?? []).map((c: NodeT, idx: number) =>
-              renderNode(c, idx, _style, layout)
+              renderNode(c, idx, style, layout)
             )}
           </div>
         );
       }
 
-      // Other layouts: standard Stage wrapper
+      if (isFourCards) {
+        // 2x2 grid: 300x300 cards, 24px gap -> 624x624
+        const children = (n.children ?? []) as NodeT[];
+
+        return (
+          <div
+            key={i}
+            className="grid grid-cols-2 gap-6 w-[624px] h-[624px]"
+          >
+            {children.slice(0, 4).map((c: NodeT, idx: number) => (
+              <div
+                key={idx}
+                className="w-[300px] h-[300px] flex items-stretch justify-stretch"
+              >
+                {renderNode(c, idx, style, layout)}
+              </div>
+            ))}
+          </div>
+        );
+      }
+
+      // Default Stage wrapper for other layouts
       return (
         <DS.Stage key={i} padded={true as any}>
           {(n.children ?? []).map((c: NodeT, idx: number) =>
-            renderNode(c, idx, _style, layout)
+            renderNode(c, idx, style, layout)
           )}
         </DS.Stage>
       );
@@ -109,15 +130,17 @@ function renderNode(
       return (
         <DS.Grid key={i}>
           {(n.children ?? []).map((c: NodeT, idx: number) =>
-            renderNode(c, idx, _style, layout)
+            renderNode(c, idx, style, layout)
           )}
         </DS.Grid>
       );
 
     case "Card": {
       const isOneCard = layout === "one-card-cta";
+      const isFourCards = layout === "four-cards-cta";
 
-      if (isOneCard) {
+      if (isOneCard || isFourCards) {
+        // Fixed-frame variant: media takes available height, text + CTA stacked
         const title = getCardTitle(n);
         const body = getCardBody(n);
         const cta = getCardCta(n);
@@ -131,9 +154,7 @@ function renderNode(
             variant="block"
             fullHeight={true}
           >
-            {/* Full-height column inside the fixed 400x400 frame */}
             <div className="flex flex-col h-full gap-3">
-              {/* Media: uses remaining vertical space above text/CTA (cover style) */}
               {media && (
                 <div className="flex-1 w-full overflow-hidden rounded-xl">
                   <DS.Media
@@ -144,7 +165,6 @@ function renderNode(
                 </div>
               )}
 
-              {/* Text stack */}
               {(title || body) && (
                 <div className="flex-none flex flex-col gap-1">
                   {title && <DS.Heading>{title}</DS.Heading>}
@@ -152,7 +172,6 @@ function renderNode(
                 </div>
               )}
 
-              {/* CTA pinned to bottom */}
               {cta && (
                 <div className="flex-none">
                   <DS.Button label={cta} />
@@ -163,8 +182,7 @@ function renderNode(
         );
       }
 
-      // ----- default cards for other layouts -----
-
+      // Default cards for other layouts
       const title = slotText(n, "title");
       const body = slotText(n, "body");
       const cta = slotCtaLabel(n);
@@ -207,7 +225,7 @@ function renderNode(
       }
 
       (n.children ?? []).forEach((c: NodeT, idx: number) => {
-        children.push(renderNode(c, idx, _style, layout));
+        children.push(renderNode(c, idx, style, layout));
       });
 
       return (

@@ -1,25 +1,30 @@
+// app/page.tsx
 "use client";
+
 import { useState } from "react";
 import type { UiSpec } from "@/schemas/ui-spec";
 import { RenderUi } from "@/ui/Renderer";
 
-/** Robust fetch helpers */
+/** Shared JSON helper */
 async function readJsonOrThrow(res: Response, label: string) {
   const ct = res.headers.get("content-type") || "";
-  const text = await res.text(); // read once
+  const text = await res.text();
+
   if (!res.ok) {
     let msg = text || `${label}: HTTP ${res.status}`;
     try {
       const j = JSON.parse(text);
       msg = `${label}: ${JSON.stringify(j)}`;
     } catch {
-      // keep text as-is
+      // keep original text
     }
     throw new Error(msg);
   }
+
   if (!ct.includes("application/json")) {
     throw new Error(`${label}: non-JSON response\n${text.slice(0, 200)}`);
   }
+
   try {
     return JSON.parse(text);
   } catch {
@@ -40,6 +45,7 @@ export default function Page() {
   const [donts, setDonts] = useState(
     "Avoid technical specs or discount mentions — keep the tone premium and aspirational."
   );
+
   const [spec, setSpec] = useState<UiSpec | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -48,6 +54,7 @@ export default function Page() {
     try {
       setLoading(true);
       setErr(null);
+      setSpec(null);
 
       const combinedPrompt =
         `USER INTENT: ${userIntent}\n` +
@@ -55,7 +62,7 @@ export default function Page() {
         `DOS: ${dos}\n` +
         `DONTS: ${donts}`;
 
-      // 1) /api/intent
+      // 1) Interpret intent
       const intentRes = await fetch("/api/intent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -69,7 +76,7 @@ export default function Page() {
       });
       const intent = await readJsonOrThrow(intentRes, "intent");
 
-      // 2) /api/spec
+      // 2) Generate UI spec (layout + cards fully from model)
       const specRes = await fetch("/api/spec", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -81,6 +88,7 @@ export default function Page() {
         throw new Error("spec: format invalid (missing components)");
       }
 
+      console.log("Generated UiSpec", specJson);
       setSpec(specJson);
     } catch (e: any) {
       console.error("❌ Generate error:", e);
@@ -133,18 +141,21 @@ export default function Page() {
         </button>
 
         {err && (
-          <p className="text-sm text-red-600 whitespace-pre-wrap">{err}</p>
+          <p className="text-sm text-red-600 whitespace-pre-wrap">
+            {err}
+          </p>
         )}
       </section>
 
       {/* PREVIEW */}
       <section className="bg-white border rounded-2xl p-4 shadow-sm">
-        <h2 className="text-lg font-semibold mb-3">Preview (400×400)</h2>
+        <h2 className="text-lg font-semibold mb-3">Preview</h2>
+
         {spec ? (
           <RenderUi spec={spec} />
         ) : (
           <div className="text-sm text-gray-500">
-            No spec yet. Click Generate.
+            Click “Generate with ChatGPT” to create a layout.
           </div>
         )}
       </section>
