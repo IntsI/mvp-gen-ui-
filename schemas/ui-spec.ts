@@ -14,12 +14,14 @@ export const Slot = z.discriminatedUnion("slot", [
   z.object({
     slot: z.literal("cta"),
     label: z.string().max(28),
-    action: z.string().max(120),
+    // Make action optional so LLM can omit it; renderer only cares about label.
+    action: z.string().max(120).optional(),
   }),
   z.object({
     slot: z.literal("media"),
     kind: z.enum(["placeholder", "image"]).default("placeholder"),
-    id: z.string().optional(), // catalog id when kind === "image"
+    // catalog id when kind === "image"
+    id: z.string().optional(),
   }),
 ]);
 
@@ -55,7 +57,7 @@ export const UiSpecSchema = z.object({
     "two-block-cards",
     "three-list-items",
     "one-card-cta",
-    "four-grid-cards",
+    "four-cards-cta", // <- align with renderer + /api/spec
   ]),
   style: StyleSchema,
   components: z.array(Node).min(1),
